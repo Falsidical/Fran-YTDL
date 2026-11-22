@@ -41,13 +41,21 @@ stays as fresh as the browser's.
 - **Linux:** if Chromium-based cookies can't be decrypted, set the keyring explicitly: `GNOMEKEYRING`
   for GNOME, `KWALLET6` or `KWALLET5` for KDE. Browsers installed as Flatpak or Snap are detected too.
 
-## Requirements
-- **ffmpeg.** It's needed to merge the separate best-video and best-audio streams, which is how the
-  highest qualities are delivered. Linux: `sudo apt install ffmpeg`. Windows: `winget install ffmpeg`,
-  or put `ffmpeg.exe` in a `bin\` folder next to the app.
-- **Deno (recommended for YouTube).** Current yt-dlp needs a JavaScript runtime to solve YouTube's
-  challenges. Without it, some formats may be missing. Install it from https://deno.com. On Windows you
-  can run `winget install DenoLand.Deno`.
+## Helper tools (downloaded for you)
+Two helper programs are needed for the best quality:
+- **ffmpeg** combines the best video stream with the best audio stream, which is how the highest
+  qualities are delivered.
+- **A JavaScript runtime (Deno)**. Current yt-dlp needs one to unlock all YouTube formats.
+
+**You don't need to install either yourself.** On first run, if either is missing, the app shows a
+banner offering to download it. You can also do this any time from **Settings → Helper tools**. The
+download comes from the official GitHub releases: Deno from denoland/deno, and ffmpeg from yt-dlp's own
+FFmpeg-Builds. Each file is checked against its published SHA-256, then saved in the app's data folder
+(`%LOCALAPPDATA%\ytdlp-gui\bin` on Windows, `~/.local/share/ytdlp-gui/bin` on Linux). No admin rights
+or PATH changes are needed. The download is about 230 MB on Windows and about 190 MB on Linux.
+
+Copies you've installed yourself are used too: ffmpeg on PATH, or set its path in Settings. Instead of
+Deno, Node.js, Bun or QuickJS on PATH also work. The app-managed copies take priority.
 
 ## Run from source
 ```bash

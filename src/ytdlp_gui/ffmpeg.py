@@ -22,8 +22,9 @@ def find_ffmpeg(configured: str = "") -> Optional[str]:
             return str(p)
         if (p / exe).is_file():
             return str(p / exe)
+    from .tools import tools_dir
     base = _app_dir()
-    for cand in (base / "bin" / exe, base / exe, base.parent / "bin" / exe):
+    for cand in (base / "bin" / exe, base / exe, base.parent / "bin" / exe, tools_dir() / exe):
         if cand.is_file():
             return str(cand)
     return shutil.which("ffmpeg")

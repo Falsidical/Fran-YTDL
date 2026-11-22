@@ -5,14 +5,17 @@ import copy
 import sys
 
 import yt_dlp.version
-from PySide6.QtCore import QProcess
+from PySide6.QtCore import QProcess, QThreadPool, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from ..config import Settings
+from .. import tools
 from ..ffmpeg import find_ffmpeg
+from ..workers import ToolInstallWorker
 
 
 def _with_browse(edit: QLineEdit, pick) -> QWidget:
@@ -79,6 +82,26 @@ class SettingsDialog(QDialog):
         ppl.addLayout(sub_row)
         ppl.addWidget(self.sponsor)
 
+        tg = QGroupBox("Helper tools (needed for best quality)")
+        tl = QFormLayout(tg)
+        self._tool_labels, self._tool_buttons = {}, {}
+        self._tool_worker = None
+        for key, title in (("ffmpeg", "ffmpeg"), ("deno", "JS runtime")):
+            lbl = QLabel()
+            lbl.setWordWrap(True)
+            btn = QPushButton()
+            btn.clicked.connect(lambda _=False, k=key: self._install_tool(k))
+            row = QHBoxLayout()
+            row.addWidget(lbl, 1)
+            row.addWidget(btn)
+            tl.addRow(title, row)
+            self._tool_labels[key], self._tool_buttons[key] = lbl, btn
+        open_btn = QPushButton("Open tools folder")
+        open_btn.clicked.connect(lambda: QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(tools.tools_dir()))))
+        tl.addRow("", open_btn)
+        self._refresh_tools()
+
         upd = QGroupBox("yt-dlp")
         ul = QHBoxLayout(upd)
         self.ver_label = QLabel(f"Version {yt_dlp.version.__version__}")
@@ -96,8 +119,45 @@ class SettingsDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addLayout(general)
         lay.addWidget(pp)
+        lay.addWidget(tg)
         lay.addWidget(upd)
         lay.addWidget(buttons)
+
+    def _refresh_tools(self):
+        st = tools.status(self.ffmpeg.text().strip())
+        can_dl = bool(tools.specs())
+        for key, info in st.items():
+            lbl, btn = self._tool_labels[key], self._tool_buttons[key]
+            if info["path"]:
+                extra = f" (managed, installed {info['installed']})" if info["managed"] else ""
+                rt = f"{info['runtime']}: " if key == "deno" else ""
+                lbl.setText(f"✔ {rt}{info['path']}{extra}")
+            else:
+                lbl.setText("✘ not found")
+            btn.setText("Update" if info["managed"] else "Download")
+            btn.setEnabled(can_dl and not self._tool_worker)
+            btn.setVisible(can_dl)
+
+    def _install_tool(self, key: str):
+        w = ToolInstallWorker([key])
+        w.setAutoDelete(False)
+        w.signals.progress.connect(lambda k, p: self._tool_labels[k].setText(f"Downloading… {p:.0f}%"))
+        w.signals.done.connect(self._tool_done)
+        self._tool_worker = w
+        for b in self._tool_buttons.values():
+            b.setEnabled(False)
+        QThreadPool.globalInstance().start(w)
+
+    def _tool_done(self, key: str, ok: bool, msg: str):
+        self._tool_worker = None
+        if not ok:
+            QMessageBox.warning(self, "Download failed", f"Couldn't install {key}:\n{msg}")
+        self._refresh_tools()
+
+    def reject(self):
+        if self._tool_worker:
+            self._tool_worker.cancel()
+        super().reject()
 
     def _pick_dir(self):
         d = QFileDialog.getExistingDirectory(self, "Download folder", self.out_dir.text())
@@ -126,6 +186,8 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "Update failed", out or "pip exited with an error.")
 
     def _accept(self):
+        if self._tool_worker:
+            self._tool_worker.cancel()
         s = self.s
         s.output_dir = self.out_dir.text().strip() or s.output_dir
         s.filename_template = self.template.text().strip() or "%(title)s [%(id)s].%(ext)s"

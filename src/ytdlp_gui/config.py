@@ -54,6 +54,7 @@ class Settings:
     sponsorblock_remove: bool = False
     rate_limit: str = ""              # e.g. "5M"
     default_account: str = ""         # account name or ""
+    tools_prompt_dismissed: bool = False
     accounts: list[Account] = field(default_factory=list)
 
     # -- helpers ---------------------------------------------------------

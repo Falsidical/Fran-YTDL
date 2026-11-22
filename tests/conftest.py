@@ -10,3 +10,10 @@ def isolated_config(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home" / ".config"))
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def isolated_tools(tmp_path, monkeypatch):
+    d = tmp_path / "tools"
+    monkeypatch.setenv("YTDLP_GUI_TOOLS", str(d))
+    return d

@@ -22,7 +22,8 @@ from ..config import Account, Settings
 from ..engine import JobSpec
 from ..ffmpeg import find_ffmpeg
 from ..formats import PRESETS, custom_format, describe_format, get_preset
-from ..workers import DownloadWorker, ProbeWorker
+from .. import tools
+from ..workers import DownloadWorker, ProbeWorker, ToolInstallWorker
 from .accounts_dialog import AccountsDialog
 from .settings_dialog import SettingsDialog
 
@@ -73,7 +74,7 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._build_ui()
         self._refresh_accounts()
-        self._check_ffmpeg()
+        self._check_tools()
 
     # ------------------------------------------------------------------ UI
     def _build_menu(self):
@@ -149,6 +150,26 @@ class MainWindow(QMainWindow):
         opts.addWidget(self.playlist)
         opts.addStretch(1)
         root.addLayout(opts)
+
+        # Banner offering to download missing helper tools.
+        self.tools_banner = QWidget()
+        self.tools_banner.setObjectName("toolsBanner")
+        self.tools_banner.setStyleSheet("#toolsBanner { background: palette(alternate-base); "
+                                        "border: 1px solid palette(mid); border-radius: 4px; }")
+        bl = QHBoxLayout(self.tools_banner)
+        bl.setContentsMargins(8, 4, 8, 4)
+        self.tools_label = QLabel()
+        self.tools_label.setWordWrap(True)
+        self.tools_dl_btn = QPushButton("Download now")
+        self.tools_dl_btn.clicked.connect(self.install_missing_tools)
+        self.tools_later_btn = QPushButton("Not now")
+        self.tools_later_btn.clicked.connect(self._dismiss_tools)
+        bl.addWidget(self.tools_label, 1)
+        bl.addWidget(self.tools_dl_btn)
+        bl.addWidget(self.tools_later_btn)
+        self.tools_banner.hide()
+        root.addWidget(self.tools_banner)
+        self._tool_worker = None
 
         self.hint = QLabel()
         self.hint.setWordWrap(True)
@@ -295,13 +316,70 @@ class MainWindow(QMainWindow):
             self.dl_pool.setMaxThreadCount(new.max_concurrent)
             config.save(self.settings)
             self._refresh_accounts()
-            self._check_ffmpeg()
+        self._check_tools()
 
-    def _check_ffmpeg(self):
-        if not find_ffmpeg(self.settings.ffmpeg_path):
-            self.statusBar().showMessage(
-                "⚠ ffmpeg not found — the best video and audio streams can't be merged. "
-                "Install ffmpeg or set its path in Settings.")
+    # ---------------------------------------------------------------- tools
+    def _check_tools(self):
+        """Offer to download ffmpeg / Deno if they're missing (they're needed for best quality)."""
+        if self._tool_worker:
+            return
+        missing = tools.missing_tools(self.settings.ffmpeg_path)
+        sp = tools.specs()
+        if not missing:
+            self.tools_banner.hide()
+            return
+        names = " and ".join("ffmpeg" if k == "ffmpeg" else "Deno" for k in missing)
+        if not sp:
+            self.tools_label.setText(f"⚠ {names} not found — install manually for best quality (see README).")
+            self.tools_dl_btn.hide()
+        else:
+            mb = sum(sp[k].approx_mb for k in missing)
+            why = []
+            if "ffmpeg" in missing:
+                why.append("ffmpeg merges the best video with the best audio")
+            if "deno" in missing:
+                why.append("Deno lets yt-dlp unlock all YouTube formats")
+            self.tools_label.setText(f"<b>Missing for best quality: {names}.</b> {'; '.join(why)}. "
+                                     f"The app can download them for you (~{mb} MB, no admin rights needed).")
+            self.tools_dl_btn.show()
+            self.tools_dl_btn.setText(f"Download now (~{mb} MB)")
+        self.tools_banner.setVisible(not self.settings.tools_prompt_dismissed)
+        self.statusBar().showMessage(f"⚠ {names} missing — see Settings → Helper tools.")
+
+    def _dismiss_tools(self):
+        self.settings.tools_prompt_dismissed = True
+        config.save(self.settings)
+        self.tools_banner.hide()
+
+    def install_missing_tools(self):
+        keys = tools.missing_tools(self.settings.ffmpeg_path)
+        if not keys or self._tool_worker:
+            return
+        w = ToolInstallWorker(keys)
+        w.setAutoDelete(False)
+        w.signals.progress.connect(self._tool_progress)
+        w.signals.done.connect(self._tool_done)
+        w.signals.all_done.connect(self._tools_all_done)
+        self._tool_worker = w
+        self.tools_dl_btn.setEnabled(False)
+        self.tools_later_btn.setEnabled(False)
+        self.probe_pool.start(w)
+
+    def _tool_progress(self, key: str, pct: float):
+        self.tools_label.setText(f"Downloading {key}… {pct:.0f}%")
+
+    def _tool_done(self, key: str, ok: bool, msg: str):
+        self._log("info" if ok else "error", f"{key}: {'installed at ' + msg if ok else msg}")
+        if not ok:
+            QMessageBox.warning(self, "Download failed", f"Couldn't install {key}:\n{msg}")
+
+    def _tools_all_done(self):
+        self._tool_worker = None
+        self.tools_dl_btn.setEnabled(True)
+        self.tools_later_btn.setEnabled(True)
+        if not tools.missing_tools(self.settings.ffmpeg_path):
+            self.statusBar().showMessage("Helper tools installed — best quality is available.")
+        self._check_tools()
 
     # ------------------------------------------------------------- probing
     def fetch(self):
@@ -585,6 +663,7 @@ class MainWindow(QMainWindow):
         QMessageBox.about(self, "About yt-dlp GUI",
                           f"<b>yt-dlp GUI</b> {__version__}<br>yt-dlp {yt_dlp.version.__version__}<br>"
                           f"Python {sys.version.split()[0]}<br>ffmpeg: {find_ffmpeg(self.settings.ffmpeg_path) or 'not found'}"
+                          f"<br>JS runtime: {' '.join(tools.find_js_runtime() or ('not found',))}"
                           "<br><br>Only download content you have the right to download.")
 
     def dragEnterEvent(self, e):
@@ -598,6 +677,8 @@ class MainWindow(QMainWindow):
         self.fetch()
 
     def closeEvent(self, e):
+        if self._tool_worker:
+            self._tool_worker.cancel()
         active = [j for j in self.jobs.values() if j.worker]
         if active:
             r = QMessageBox.question(self, "Quit", f"{len(active)} download(s) still running. Cancel them and quit?")

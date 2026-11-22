@@ -1,6 +1,7 @@
 """Qt workers that run yt-dlp off the GUI thread and report back via signals."""
 from __future__ import annotations
 
+import threading
 import traceback
 from typing import Optional
 
@@ -94,3 +95,36 @@ class AccountCheckWorker(QRunnable):
         except Exception as e:
             res = AccountCheck(False, error=str(e))
         self.signals.done.emit(res)
+
+
+class ToolSignals(QObject):
+    progress = Signal(str, float)      # tool key, percent
+    done = Signal(str, bool, str)      # tool key, ok, message (path or error)
+    all_done = Signal()
+
+
+class ToolInstallWorker(QRunnable):
+    """Installs helper tools one after another (see tools.py)."""
+
+    def __init__(self, keys: list[str]):
+        super().__init__()
+        self.keys = list(keys)
+        self.signals = ToolSignals()
+        self.cancel_event = threading.Event()
+
+    def cancel(self):
+        self.cancel_event.set()
+
+    def run(self):
+        from . import tools
+        for key in self.keys:
+            try:
+                path = tools.install(key, lambda p, k=key: self.signals.progress.emit(k, p),
+                                     self.cancel_event)
+                self.signals.done.emit(key, True, path)
+            except tools.Cancelled:
+                self.signals.done.emit(key, False, "Cancelled")
+                break
+            except Exception as e:
+                self.signals.done.emit(key, False, str(e) or e.__class__.__name__)
+        self.signals.all_done.emit()

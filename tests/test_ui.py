@@ -45,3 +45,28 @@ def test_dialogs_open(qtbot):
     sd.concurrent.setValue(5)
     sd._accept()
     assert sd.result_settings().max_concurrent == 5
+
+
+def test_tools_banner(qtbot, tmp_path, monkeypatch):
+    from ytdlp_gui import tools
+    missing = ["ffmpeg", "deno"]
+    monkeypatch.setattr(tools, "missing_tools", lambda *_a: list(missing))
+    w = MainWindow(Settings(output_dir=str(tmp_path)))
+    qtbot.addWidget(w)
+    assert not w.tools_banner.isHidden()
+    assert "ffmpeg" in w.tools_label.text() and "Deno" in w.tools_label.text()
+    missing.clear()            # simulate a successful install
+    w._tools_all_done()
+    assert w.tools_banner.isHidden()
+
+
+def test_tools_banner_dismissed(qtbot, tmp_path, monkeypatch):
+    from ytdlp_gui import tools
+    monkeypatch.setattr(tools, "missing_tools", lambda *_a: ["deno"])
+    w = MainWindow(Settings(output_dir=str(tmp_path)))
+    qtbot.addWidget(w)
+    w._dismiss_tools()
+    assert w.tools_banner.isHidden() and w.settings.tools_prompt_dismissed
+    sd = SettingsDialog(w.settings)
+    qtbot.addWidget(sd)
+    assert set(sd._tool_labels) == {"ffmpeg", "deno"}

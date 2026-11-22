@@ -15,6 +15,7 @@ from yt_dlp.utils import DownloadCancelled
 from .accounts import to_cookiesfrombrowser
 from .config import Account, Settings
 from .ffmpeg import find_ffmpeg
+from .tools import find_js_runtime
 from .formats import get_preset
 
 
@@ -65,8 +66,17 @@ def build_argv(settings: Settings, job: JobSpec) -> list[str]:
     return argv
 
 
+def _apply_js_runtime(opts: dict) -> None:
+    """Point yt-dlp at the app-managed Deno, or any runtime found on PATH."""
+    rt = find_js_runtime()
+    if rt:
+        name, path = rt
+        opts["js_runtimes"] = {name: {"path": path}}
+
+
 def build_opts(settings: Settings, job: JobSpec) -> dict:
     opts = yt_dlp.parse_options(build_argv(settings, job)).ydl_opts
+    _apply_js_runtime(opts)
     if job.account:
         # Set directly (not via CLI string) so Windows paths with ':' survive.
         opts["cookiesfrombrowser"] = to_cookiesfrombrowser(job.account)
@@ -78,6 +88,7 @@ def build_opts(settings: Settings, job: JobSpec) -> dict:
 
 def probe_opts(settings: Settings, account: Optional[Account]) -> dict:
     opts = yt_dlp.parse_options(["--flat-playlist"]).ydl_opts
+    _apply_js_runtime(opts)
     if account:
         opts["cookiesfrombrowser"] = to_cookiesfrombrowser(account)
     ff = find_ffmpeg(settings.ffmpeg_path)
