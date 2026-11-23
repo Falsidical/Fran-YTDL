@@ -3,8 +3,15 @@
 # Optional: FFMPEG=/path/to/ffmpeg ./packaging/build_linux.sh  (bundles ffmpeg into bin/)
 set -euo pipefail
 cd "$(dirname "$0")/.."
-python3 -m pip install -e '.[dev]'
-python3 -m PyInstaller --noconfirm --distpath dist --workpath build packaging/ytdlp-gui.spec
+# Use the active venv, else ./.venv (created if missing); system pip is often blocked (PEP 668).
+if [[ -n "${VIRTUAL_ENV:-}" ]]; then PY=python
+else
+  [[ -x .venv/bin/python ]] || python3 -m venv .venv
+  PY=.venv/bin/python
+fi
+"$PY" -m pip install -e '.[dev]'
+rm -rf build dist/ytdlp-gui
+"$PY" -m PyInstaller --noconfirm --distpath dist --workpath build packaging/ytdlp-gui.spec
 if [[ -n "${FFMPEG:-}" ]]; then
   mkdir -p dist/ytdlp-gui/bin && cp "$FFMPEG" dist/ytdlp-gui/bin/ffmpeg
   [[ -x "$(dirname "$FFMPEG")/ffprobe" ]] && cp "$(dirname "$FFMPEG")/ffprobe" dist/ytdlp-gui/bin/
